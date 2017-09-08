@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <catalog>
-    <logName filterkey="yinbi">
-        <filed name="yinbi" limit="60000"/>
+    <logName filterkey="yinbi_total">
+        <filed name="yinbi_total" limit="8000000"/>
     </logName>
+
+    <logName filterkey="curr_teamexp">
+        <filed name="curr_teamexp" limit="20000"/>
+    </logName>
+
+    <logName filterkey="wupin">
+        <filed name="100003" limit="1"/>
+    </logName>
+
 </catalog>
