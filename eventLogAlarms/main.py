@@ -199,7 +199,7 @@ class EventAlarm(object):
             textMsg = json.dumps(textMsg)
 
             print textMsg
-            requests.post(url=choice(url_list), data=textMsg, headers=heards)
+            # requests.post(url=choice(url_list), data=textMsg, headers=heards)
         except Exception, e:
             print e.message
 
