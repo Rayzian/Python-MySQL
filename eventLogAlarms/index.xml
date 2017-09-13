@@ -1,15 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <catalog>
     <logName filterkey="yinbi_total">
-        <filed name="yinbi_total" limit="8000000"/>
+        <filed name="yinbi_total" limit="100000000" liejia="false"/>
     </logName>
 
-    <logName filterkey="curr_teamexp">
-        <filed name="curr_teamexp" limit="20000"/>
+    <logName filterkey="yinbi">
+        <filed name="yinbi" limit="300000" liejia="true"/>
+    </logName>
+
+    <logName filterkey="zuanshi">
+        <filed name="zuanshi" limit="80" liejia="true"/>
     </logName>
 
     <logName filterkey="wupin">
-        <filed name="100003" limit="1"/>
+        <filed name="110003" limit="1000" liejia="true"/>
+        <filed name="110004" limit="500" liejia="true"/>
     </logName>
 
 </catalog>
