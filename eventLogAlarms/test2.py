@@ -113,6 +113,7 @@ class EventAlarm(object):
                             pk = re.findall(r'pk:(\S+)', temp)[0]
                             if pk not in log_dict:
                                 log_dict[pk] = {}
+                                log_dict[pk]["totalCounts"] = 0
                             if str(filterkey) != "wupin":
                                 for key in xml[filterkey].keys():
                                     if str(key) == "cumulative":
@@ -125,14 +126,14 @@ class EventAlarm(object):
                                     value = re.findall(pattern1, temp) if re.findall(pattern1, temp) else \
                                         re.findall(pattern2, temp)
                                     if value:
-                                        log = {}
+                                        log_dict[pk][key] = max(value)
                                         if int(max(value)) > int((xml[filterkey][key])):
-                                            log = {key: max(value)}
-                                            self.insertLogData(temp=temp, filterkey=xml[filterkey], log=log)
-                                            self.sendLogData(text=temp, filterkey=xml[filterkey], log=log)
+                                            log_dict[pk]["totalCounts"] += 1
                                         self.accumulate(key=key, xml=xml, filterkey=filterkey, temp=temp, value=value)
 
                             elif str(filterkey) == "wupin":
+                                if filterkey not in log_dict[pk]:
+                                    log_dict[pk][filterkey] = {}
                                 value = re.findall(r'wupin:(\S+?);', temp) if re.findall(r'wupin:(\S+?);', temp) else \
                                     re.findall(r'wupin:(\S+)', temp)
                                 if value:
@@ -144,15 +145,20 @@ class EventAlarm(object):
                                         match_dict = {value[0].split(",")[0]: value[0].split(",")[1]}
                                     for key in xml["wupin"].keys():
                                         if key in match_dict.keys():
+                                            log_dict[pk][filterkey][key] = int(match_dict[key])
                                             if int(match_dict[key]) > int(xml["wupin"][key]["limit"]):
-                                                log = {key: match_dict[key]}
-                                                self.insertLogData(temp=temp, filterkey=xml[filterkey], log=log)
-                                                self.sendLogData(text=temp, filterkey=xml[filterkey], log=log)
+                                                log_dict[pk]["totalCounts"] += 1
+
                                             self.accumulate(key=key, xml=xml, filterkey=filterkey, temp=temp,
                                                             value=value,
                                                             match_dict=match_dict)
+
                 except Exception, e:
                     print e.message
+
+            for log_key in log_dict.keys():
+                if log_dict[log_key]["totalCounts"] > 1000:
+                    self.sendLogData(filterkey=xml[filterkey], log=log)
 
             if flag:
                 os.remove(path)
@@ -180,19 +186,6 @@ class EventAlarm(object):
         gz = _GZipTool(bufSize=8192)
         decompress_path = path[:-3]
         return gz.decompress(gzFile=path, dst=decompress_path)
-
-    def insertLogData(self, **kwargs):
-        """
-        向mongodb插入数据
-        :param kwargs: 参数键值对
-        :return: None
-        """
-        data = {
-            "log": kwargs["log"],
-            "filterkey": kwargs["filterkey"],
-            "message": kwargs["temp"]
-        }
-        self.db["alarmLog"].insert_one(dict(data))
 
     def sendLogData(self, **kwargs):
         """
