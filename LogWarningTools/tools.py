@@ -169,7 +169,7 @@ class EventAlarm(object):
                     print e.message
 
             for log_key in self.log_dict.keys():
-                if self.log_dict[log_key]["totalCounts"] > 60:
+                if self.log_dict[log_key]["totalCounts"] > 50:
                     self.sendLogData(filterkey=xml, log=log_key, file=file_name)
 
             if flag:
@@ -231,30 +231,31 @@ class EventAlarm(object):
         except Exception, e:
             print e.message
 
-    def accumulate(self, pk, key, xml, filterkey, temp, value, match_dict=None):
-
+    def accumulate(self, **kwargs):
+        """
+        对字段值进行累加
+        :param kwargs: 参数键值对
+        :return: None
+        """
         try:
-            if "cumulative" not in self.log_dict[pk]:
-                self.log_dict[pk]["cumulative"] = {}
-            if key not in self.log_dict[pk]["cumulative"]:
-                self.log_dict[pk]["cumulative"][key] = 0
-            if str(filterkey) == "wupin":
-                if str(xml[filterkey][key]["cumulative"]) == "true":
-                    self.log_dict[pk]["cumulative"][key] += int(match_dict[key])
+            if "cumulative" not in self.log_dict[kwargs["pk"]]:
+                self.log_dict[kwargs["pk"]]["cumulative"] = {}
+            if kwargs["key"] not in self.log_dict[kwargs["pk"]]["cumulative"]:
+                self.log_dict[kwargs["pk"]]["cumulative"][kwargs["key"]] = 0
+            if str(kwargs["filterkey"]) == "wupin":
+                if str(xml[kwargs["filterkey"]][kwargs["key"]]["cumulative"]) == "true":
+                    self.log_dict[kwargs["pk"]]["cumulative"][kwargs["key"]] += int(kwargs["match_dict"][kwargs["key"]])
             else:
-                if str(xml[filterkey]["cumulative"]) == "true":
-                    self.log_dict[pk]["cumulative"][key] += int(max(value))
+                if str(xml[kwargs["filterkey"]]["cumulative"]) == "true":
+                    self.log_dict[kwargs["pk"]]["cumulative"][kwargs["key"]] += int(max(kwargs["value"]))
         except Exception, e:
             print e.message
 
     def daemonize(self, dir_path, save_dir):
         """
         创建守护进程
-
-        :param pid_file: 保存进程id的文件
         :param dir_path: 日志文件夹路径
         :param save_dir: 保存日志的文件夹路径
-
         :return: None
         """
 
@@ -286,6 +287,7 @@ class EventAlarm(object):
                             check_path = os.path.join(save_dir, file)
                             file_path = os.path.join(path, file)
 
+                            # 检查保存日志文件的文件夹是否有该文件
                             if not os.path.exists(check_path):
                                 Logger.info("Get log: %s" % str(file))
                                 self.parseLogFile(file_path=file_path)
@@ -307,11 +309,13 @@ class EventAlarm(object):
 
 if __name__ == '__main__':
     try:
+        # 获取日志文件目录
         config, _ = genParserClient()
         dir_path = config.path
 
         event = EventAlarm()
 
+        # 实例化logger对象
         handler = RotatingFileHandler(LOG_PATH_FILE, LOG_MODE, LOG_MAX_SIZE, LOG_MAX_FILES)
         formatter = logging.Formatter(LOG_FORMAT)
         handler.setFormatter(formatter)
@@ -323,6 +327,7 @@ if __name__ == '__main__':
         Logger.info('Daemon start up at %s' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
         Logger.info("Daemon pid is: %s" % str(os.getpid()))
 
+        # 创建保存日志文件的文件夹
         path = sys.path[0]
         save_dir = os.path.join(path, "gameLogTemp")
         if not os.path.exists(save_dir):
