@@ -5,6 +5,8 @@
 @简乐互动
 
 """
+import shutil
+import time
 from random import choice
 import gzip
 import requests
@@ -14,8 +16,17 @@ import re
 import sys
 from xml.dom.minidom import parse
 import xml.dom.minidom
-import pymongo
 from argUtil import genParserClient
+import logging
+from logging.handlers import RotatingFileHandler
+
+LOG_PATH_FILE = "./daemon.log"
+LOG_MODE = 'a'
+LOG_MAX_SIZE = 2 * 1024 * 1024  # 2M
+LOG_MAX_FILES = 4  # 4 Files: print.log.1, print.log.2, print.log.3, print.log.4
+LOG_LEVEL = logging.DEBUG
+
+LOG_FORMAT = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d(%(funcName)s)] %(message)s"
 
 
 class _GZipTool(object):
@@ -60,8 +71,7 @@ class EventAlarm(object):
     def __init__(self):
         self.textMsg_list = []
         self.cumulative_dict = {}
-        self.client = pymongo.MongoClient("172.16.214.128", 27017)
-        self.db = self.client["eventAlarm"]
+        self.log_dict = {}
 
     def parseXML(self):
         """
@@ -95,25 +105,26 @@ class EventAlarm(object):
         except Exception, e:
             print e.message
 
-    def parseLogFile(self, file_path, xml):
+    def parseLogFile(self, file_path):
         """
         解析日志文件
         :param file_path: 日志文件路径
         :param xml: xml文件
         :return: None
         """
+        xml = self.parseXML()
         path, flag = self.checkFileType(path=file_path)
+        file_name = path.replace("\\", "/").strip().split("/")[-1]
 
         with open(path, "r") as f:
-            log_dict = {}
             for temp in f:
                 try:
                     for filterkey in xml.keys():
                         if temp and str(filterkey) in temp:
-                            pk = re.findall(r'pk:(\S+)', temp)[0]
-                            if pk not in log_dict:
-                                log_dict[pk] = {}
-                                log_dict[pk]["totalCounts"] = 0
+                            pk = re.findall(r'pk:(\S+?);', temp)[0]
+                            if pk not in self.log_dict:
+                                self.log_dict[pk] = {}
+                                self.log_dict[pk]["totalCounts"] = 0
                             if str(filterkey) != "wupin":
                                 for key in xml[filterkey].keys():
                                     if str(key) == "cumulative":
@@ -126,14 +137,15 @@ class EventAlarm(object):
                                     value = re.findall(pattern1, temp) if re.findall(pattern1, temp) else \
                                         re.findall(pattern2, temp)
                                     if value:
-                                        log_dict[pk][key] = max(value)
+                                        self.log_dict[pk][key] = max(value)
                                         if int(max(value)) > int((xml[filterkey][key])):
-                                            log_dict[pk]["totalCounts"] += 1
-                                        self.accumulate(key=key, xml=xml, filterkey=filterkey, temp=temp, value=value)
+                                            self.log_dict[pk]["totalCounts"] += 1
+                                        self.accumulate(pk=pk, key=key, xml=xml, filterkey=filterkey, temp=temp,
+                                                        value=value)
 
                             elif str(filterkey) == "wupin":
-                                if filterkey not in log_dict[pk]:
-                                    log_dict[pk][filterkey] = {}
+                                if filterkey not in self.log_dict:
+                                    self.log_dict[pk][filterkey] = {}
                                 value = re.findall(r'wupin:(\S+?);', temp) if re.findall(r'wupin:(\S+?);', temp) else \
                                     re.findall(r'wupin:(\S+)', temp)
                                 if value:
@@ -145,20 +157,20 @@ class EventAlarm(object):
                                         match_dict = {value[0].split(",")[0]: value[0].split(",")[1]}
                                     for key in xml["wupin"].keys():
                                         if key in match_dict.keys():
-                                            log_dict[pk][filterkey][key] = int(match_dict[key])
+                                            self.log_dict[pk][filterkey][key] = int(match_dict[key])
                                             if int(match_dict[key]) > int(xml["wupin"][key]["limit"]):
-                                                log_dict[pk]["totalCounts"] += 1
+                                                self.log_dict[pk]["totalCounts"] += 1
 
-                                            self.accumulate(key=key, xml=xml, filterkey=filterkey, temp=temp,
+                                            self.accumulate(pk=pk, key=key, xml=xml, filterkey=filterkey, temp=temp,
                                                             value=value,
                                                             match_dict=match_dict)
 
                 except Exception, e:
                     print e.message
 
-            for log_key in log_dict.keys():
-                if log_dict[log_key]["totalCounts"] > 1000:
-                    self.sendLogData(filterkey=xml[filterkey], log=log)
+            for log_key in self.log_dict.keys():
+                if self.log_dict[log_key]["totalCounts"] > 60:
+                    self.sendLogData(filterkey=xml, log=log_key, file=file_name)
 
             if flag:
                 os.remove(path)
@@ -205,45 +217,116 @@ class EventAlarm(object):
                 "msgtype": "text",
                 "text": {
                     "content": {
-                        u"原日志信息": kwargs["text"],
                         u"过滤规则": kwargs["filterkey"],
-                        u"问题字段": kwargs["log"]
+                        u"问题字段": self.log_dict[kwargs["log"]],
+                        u"pk": kwargs["log"],
+                        u"日志文件名": kwargs["file"]
                     }
                 }
             }
             textMsg = json.dumps(textMsg)
 
             print textMsg
-            # requests.post(url=choice(url_list), data=textMsg, headers=heards)
+            requests.post(url=choice(url_list), data=textMsg, headers=heards)
         except Exception, e:
             print e.message
 
-    def accumulate(self, key, xml, filterkey, temp, value, match_dict=None):
+    def accumulate(self, pk, key, xml, filterkey, temp, value, match_dict=None):
 
         try:
-            pk = re.findall(r'pk:(\S+?);', temp)
-            if pk:
-                if pk[0] not in self.cumulative_dict:
-                    self.cumulative_dict[pk[0]] = {}
-                if key not in self.cumulative_dict[pk[0]]:
-                    self.cumulative_dict[pk[0]][key] = 0
+            if "cumulative" not in self.log_dict[pk]:
+                self.log_dict[pk]["cumulative"] = {}
+            if key not in self.log_dict[pk]["cumulative"]:
+                self.log_dict[pk]["cumulative"][key] = 0
             if str(filterkey) == "wupin":
                 if str(xml[filterkey][key]["cumulative"]) == "true":
-                    self.cumulative_dict[pk[0]][key] += int(match_dict[key])
+                    self.log_dict[pk]["cumulative"][key] += int(match_dict[key])
             else:
                 if str(xml[filterkey]["cumulative"]) == "true":
-                    self.cumulative_dict[pk[0]][key] += int(max(value))
+                    self.log_dict[pk]["cumulative"][key] += int(max(value))
         except Exception, e:
             print e.message
+
+    def daemonize(self, dir_path, save_dir):
+        """
+        创建守护进程
+
+        :param pid_file: 保存进程id的文件
+        :param dir_path: 日志文件夹路径
+        :param save_dir: 保存日志的文件夹路径
+
+        :return: None
+        """
+
+        pid = os.fork()
+        if pid:
+            sys.exit(0)
+
+        os.chdir('%s' % (os.getcwd()))
+        os.umask(0)
+        os.setsid()
+
+        _pid = os.fork()
+        if _pid:
+            sys.exit(0)
+
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+        with open('/dev/null') as read_null, open('/dev/null', 'w') as write_null:
+            os.dup2(read_null.fileno(), sys.stdin.fileno())
+            os.dup2(write_null.fileno(), sys.stdout.fileno())
+            os.dup2(write_null.fileno(), sys.stderr.fileno())
+
+        while True:
+            try:
+                for path, dir, files in os.walk(dir_path):
+                    if files:
+                        for file in files:
+                            check_path = os.path.join(save_dir, file)
+                            file_path = os.path.join(path, file)
+
+                            if not os.path.exists(check_path):
+                                Logger.info("Get log: %s" % str(file))
+                                self.parseLogFile(file_path=file_path)
+                                Logger.info("Parse log %s finished." % str(file))
+                                Logger.info("Copy log to %s" % str(save_dir))
+                                shutil.copy(file_path, save_dir)
+                                Logger.info("Copy finished.\n")
+                                os.remove(file_path)
+                            else:
+                                Logger.info("File is exists at %s\n" % str(check_path))
+                                os.remove(file_path)
+            except Exception, e:
+                print e
+                Logger.debug('Daemon exits at %s\n' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
+                cmd = "sudo kill -9 %s" % str(os.getpid())
+                os.system(cmd)
+                return None
 
 
 if __name__ == '__main__':
     try:
-        # config, _ = genParserClient()
-        # file_path = config.path
-        file_path = r"/home/zhouxiaoxi/Desktop/eventAlarm/hd_maxzhanli.txt"
+        config, _ = genParserClient()
+        dir_path = config.path
+
         event = EventAlarm()
-        xml_dict = event.parseXML()
-        event.parseLogFile(file_path=file_path, xml=xml_dict)
+
+        handler = RotatingFileHandler(LOG_PATH_FILE, LOG_MODE, LOG_MAX_SIZE, LOG_MAX_FILES)
+        formatter = logging.Formatter(LOG_FORMAT)
+        handler.setFormatter(formatter)
+
+        Logger = logging.getLogger()
+        Logger.setLevel(LOG_LEVEL)
+        Logger.addHandler(handler)
+
+        Logger.info('Daemon start up at %s' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
+        Logger.info("Daemon pid is: %s" % str(os.getpid()))
+
+        path = sys.path[0]
+        save_dir = os.path.join(path, "gameLogTemp")
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+        event.daemonize(dir_path=dir_path, save_dir=save_dir)
     except Exception, e:
         print e.message
