@@ -117,7 +117,7 @@ class EventAlarm(object):
         xml = self.parseXML()
         path, flag = self.checkFileType(path=file_path)
         file_name = path.replace("\\", "/").strip().split("/")[-1]
-        json_name = os.path.join(json_dir, (file_name + ".txt"))
+        json_name = os.path.join(json_dir, (file_name + ".json"))
 
         with open(path, "r") as f:
             switch = False
@@ -144,7 +144,7 @@ class EventAlarm(object):
                                                         value=value)
                                         if int(max(value)) > int((xml[filterkey][key])) or \
                                                         self.log_dict[pk]["cumulative"][key] > int(
-                                                        (xml[filterkey][key])):
+                                                    (xml[filterkey][key])):
                                             self.log_dict[pk][key] = max(value)
                                             switch = True
 
@@ -162,33 +162,35 @@ class EventAlarm(object):
                                         match_dict = {value[0].split(",")[0]: value[0].split(",")[1]}
                                     for key in xml["wupin"].keys():
                                         if key in match_dict.keys():
+                                            self.log_dict[pk][filterkey][key] = int(match_dict[key])
                                             self.accumulate(pk=pk, key=key, xml=xml, filterkey=filterkey, temp=temp,
                                                             value=value,
                                                             match_dict=match_dict)
                                             if int(match_dict[key]) > int(xml["wupin"][key]["limit"]) or \
                                                             self.log_dict[pk]["cumulative"][key] > int(
-                                                            (xml[filterkey][key]["limit"])):
+                                                        (xml[filterkey][key]["limit"])):
                                                 self.log_dict[pk][filterkey][key] = int(match_dict[key])
                                                 switch = True
-
-
-
                 except Exception, e:
                     print traceback.format_exc()
 
-            if switch:
-                # with open(json_name, 'a') as json_file:
-                f = codecs.open(filename=json_name, mode="a", encoding="utf-8")
-                for log_key in self.log_dict.keys():
-                    data = {u"过滤规则": xml, u"问题字段": self.log_dict[log_key], u"pk": log_key, u"日志文件名": file_name}
-                    print data
-                    f.write((json.dumps(data)).encode("utf-8"))
-                    f.write("\n")
-                    # f.write(data)
-                f.close()
+            try:
+                if switch:
+                    with codecs.open(filename=json_name, mode="a", encoding="utf-8") as f:
+                        for log_key in self.log_dict.keys():
+                            data = {
+                                u"过滤规则": xml,
+                                u"问题字段": self.log_dict[log_key],
+                                u"pk": log_key,
+                                u"日志文件名": file_name
+                            }
+                            print data
+                            f.write((json.dumps(data, ensure_ascii=False)))
+                            f.write("\n")
 
-
-                self.sendLogData(file=json_name)
+                    self.sendLogData(file=json_name)
+            except Exception, e:
+                print traceback.format_exc()
 
             if flag:
                 os.remove(path)
@@ -242,10 +244,9 @@ class EventAlarm(object):
             textMsg = json.dumps(textMsg)
 
             print textMsg
-            # requests.post(url=choice(url_list), data=textMsg, headers=heards)
+            requests.post(url=choice(url_list), data=textMsg, headers=heards)
         except Exception, e:
             print traceback.format_exc()
-
 
     def accumulate(self, **kwargs):
         """
@@ -267,7 +268,6 @@ class EventAlarm(object):
         except Exception, e:
             print traceback.format_exc()
 
-
     def daemonize(self, dir_path, save_dir, json_dir):
         """
         创建守护进程
@@ -276,26 +276,26 @@ class EventAlarm(object):
         :return: None
         """
 
-        # pid = os.fork()
-        # if pid:
-        #     sys.exit(0)
-        #
-        # os.chdir('%s' % (os.getcwd()))
-        # os.umask(0)
-        # os.setsid()
-        #
-        # _pid = os.fork()
-        # if _pid:
-        #     sys.exit(0)
-        #
-        # sys.stdout.flush()
-        # sys.stderr.flush()
-        #
-        # Logger.info("Daemon pid is: %s" % str(os.getpid()))
-        # with open('/dev/null') as read_null, open('/dev/null', 'w') as write_null:
-        #     os.dup2(read_null.fileno(), sys.stdin.fileno())
-        #     os.dup2(write_null.fileno(), sys.stdout.fileno())
-        #     os.dup2(write_null.fileno(), sys.stderr.fileno())
+        pid = os.fork()
+        if pid:
+            sys.exit(0)
+
+        os.chdir('%s' % (os.getcwd()))
+        os.umask(0)
+        os.setsid()
+
+        _pid = os.fork()
+        if _pid:
+            sys.exit(0)
+
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+        Logger.info("Daemon pid is: %s" % str(os.getpid()))
+        with open('/dev/null') as read_null, open('/dev/null', 'w') as write_null:
+            os.dup2(read_null.fileno(), sys.stdin.fileno())
+            os.dup2(write_null.fileno(), sys.stdout.fileno())
+            os.dup2(write_null.fileno(), sys.stderr.fileno())
 
         while True:
             try:
@@ -307,46 +307,45 @@ class EventAlarm(object):
 
                             # 检查保存日志文件的文件夹是否有该文件
                             if not os.path.exists(check_path):
-                                # Logger.info("Get log: %s" % str(file))
+                                Logger.info("Get log: %s" % str(file))
                                 self.parseLogFile(file_path=file_path, json_dir=json_dir)
-                                # Logger.info("Parse log %s finished." % str(file))
-                                # Logger.info("Copy log to %s" % str(save_dir))
+                                Logger.info("Parse log %s finished." % str(file))
+                                Logger.info("Copy log to %s" % str(save_dir))
                                 shutil.copy(file_path, save_dir)
-                                # Logger.info("Copy finished.\n")
+                                Logger.info("Copy finished.\n")
                                 os.remove(file_path)
                             else:
-                                # Logger.info("File is exists at %s\n" % str(check_path))
+                                Logger.info("File is exists at %s\n" % str(check_path))
                                 os.remove(file_path)
             except Exception, e:
                 print traceback.format_exc()
 
-                # Logger.debug('Daemon exits at %s\n' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
-                # cmd = "sudo kill -9 %s" % str(os.getpid())
-                # os.system(cmd)
+                Logger.debug('Daemon exits at %s\n' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
+                cmd = "sudo kill -9 %s" % str(os.getpid())
+                os.system(cmd)
                 return None
 
 
 if __name__ == '__main__':
     try:
         # 获取日志文件目录
-        # config, _ = genParserClient()
-        # dir_path = config.path
+        config, _ = genParserClient()
+        dir_path = config.path
 
         event = EventAlarm()
 
         # # 实例化logger对象
-        # handler = RotatingFileHandler(LOG_PATH_FILE, LOG_MODE, LOG_MAX_SIZE, LOG_MAX_FILES)
-        # formatter = logging.Formatter(LOG_FORMAT)
-        # handler.setFormatter(formatter)
-        #
-        # Logger = logging.getLogger()
-        # Logger.setLevel(LOG_LEVEL)
-        # Logger.addHandler(handler)
-        #
-        # Logger.info('Daemon start up at %s' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
+        handler = RotatingFileHandler(LOG_PATH_FILE, LOG_MODE, LOG_MAX_SIZE, LOG_MAX_FILES)
+        formatter = logging.Formatter(LOG_FORMAT)
+        handler.setFormatter(formatter)
+
+        Logger = logging.getLogger()
+        Logger.setLevel(LOG_LEVEL)
+        Logger.addHandler(handler)
+
+        Logger.info('Daemon start up at %s' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
 
         # 创建保存日志文件的文件夹
-        dir_path = r'/home/zhouxiaoxi/Desktop/Log111'
         path = sys.path[0]
         save_dir = os.path.join(path, "gameLogTemp")
         json_dir = os.path.join(path, "result")
@@ -357,4 +356,3 @@ if __name__ == '__main__':
         event.daemonize(dir_path=dir_path, save_dir=save_dir, json_dir=json_dir)
     except Exception, e:
         print traceback.format_exc()
-
