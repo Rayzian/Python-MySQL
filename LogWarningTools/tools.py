@@ -105,7 +105,6 @@ class EventAlarm(object):
             if xml_dict:
                 return xml_dict
         except Exception, e:
-            print traceback.format_exc()
             Logger.error(traceback.format_exc())
 
     def parseLogFile(self, file_path, json_dir, ip):
@@ -122,6 +121,7 @@ class EventAlarm(object):
 
         with open(path, "r") as f:
             switch = False
+            value_dict = {}
             for temp in f:
                 try:
                     for filterkey in xml.keys():
@@ -143,18 +143,18 @@ class EventAlarm(object):
                                     if value:
                                         self.accumulate(pk=pk, key=key, xml=xml, filterkey=filterkey, temp=temp,
                                                         value=value)
-                                        if int(max(value)) > int((xml[filterkey][key])) or (
+                                        if int(max(value)) >= int((xml[filterkey][key])) or (
                                                         key in self.log_dict[pk]["cumulative"] and
-                                                        self.log_dict[pk]["cumulative"][key] > int(
+                                                        self.log_dict[pk]["cumulative"][key] >= int(
                                                         (xml[filterkey][key]))):
                                             switch = True
-                                            if not max(value).startswith("-"):
+                                            if not max(value).startswith("-") and int(max(value)) >= int(
+                                                    (xml[filterkey][key])):
                                                 self.log_dict[pk][key] = max(value)
 
 
                             elif str(filterkey) == "wupin":
-                                value_dict = {}
-                                if filterkey not in self.log_dict:
+                                if filterkey not in self.log_dict[pk]:
                                     self.log_dict[pk][filterkey] = {}
                                 value = re.findall(r';wupin:(\S+?);', temp) if re.findall(r';wupin:(\S+?);', temp) else \
                                     re.findall(r';wupin:(\S+)', temp)
@@ -166,22 +166,22 @@ class EventAlarm(object):
                                         match_dict = {value[0].split(",")[0]: value[0].split(",")[1]}
                                     for key in xml["wupin"].keys():
                                         if key in match_dict.keys():
-                                            if key not in self.log_dict[pk][filterkey]:
-                                                self.log_dict[pk][filterkey][key] = int(match_dict[key])
-                                                value_dict[pk] = []
-                                            value_dict[pk].append(int(match_dict[key]))
+                                            value_dict[key] = []
                                             self.accumulate(pk=pk, key=key, xml=xml, filterkey=filterkey, temp=temp,
                                                             value=value,
                                                             match_dict=match_dict)
-                                            if int(match_dict[key]) > int(xml["wupin"][key]["limit"]) or \
-                                                            self.log_dict[pk]["cumulative"][key] > int(
+                                            if int(match_dict[key]) >= int(xml["wupin"][key]["limit"]) or \
+                                                            self.log_dict[pk]["cumulative"][key] >= int(
                                                         (xml[filterkey][key]["limit"])):
+                                                value_dict[key].append(int(match_dict[key]))
                                                 switch = True
-                                                if not str(max(value_dict[pk])).startswith("-"):
-                                                    self.log_dict[pk][filterkey][key] = max(value_dict[pk])
+                                                if not str(max(value_dict[key])).startswith("-") and int(
+                                                        match_dict[key]) >= int(xml["wupin"][key]["limit"]):
+                                                    if key not in self.log_dict[pk][filterkey]:
+                                                        self.log_dict[pk][filterkey][key] = ""
+                                                    self.log_dict[pk][filterkey][key] = max(value_dict[key])
 
                 except Exception, e:
-                    print traceback.format_exc()
                     Logger.error(traceback.format_exc())
 
             try:
@@ -200,7 +200,6 @@ class EventAlarm(object):
 
                     self.sendLogData(file=json_name, ip=ip)
             except Exception, e:
-                print traceback.format_exc()
                 Logger.error(traceback.format_exc())
 
             if flag:
@@ -237,10 +236,11 @@ class EventAlarm(object):
         :return: None
         """
         try:
+            current_folder = os.path.dirname(os.path.realpath(__file__)).replace("\\", "/").strip().split("/")[-1]
             host = kwargs["ip"]
             ftp_path = "ftp://" + host
             file_name = kwargs["file"].replace("\\", "/").strip().split("/")[-1]
-            path = ftp_path + "/" + "LogWarningTools" + "/" + "result" + "/" + file_name
+            path = ftp_path + "/" + current_folder + "/" + "result" + "/" + file_name
 
             url_list = [
                 "https://oapi.dingtalk.com/robot/send?access_token=45f5f3675c7752a245324a79209c9d814aceb80e5d63a8d041e34fc3c4611baf",
@@ -253,18 +253,17 @@ class EventAlarm(object):
                 "msgtype": "text",
                 "text": {
                     "content": {
-                        u"解析结果文件路径": path,
-                        u"FTP账号": "admin",
-                        u"FTP密码": "123456"
+                        u"解析结果文件路径": path
                     }
                 }
             }
             textMsg = json.dumps(textMsg)
 
-            print textMsg
             requests.post(url=choice(url_list), data=textMsg, headers=heards)
+
+            self.log_dict = {}
         except Exception, e:
-            print traceback.format_exc()
+            self.log_dict = {}
             Logger.error(traceback.format_exc())
 
     def accumulate(self, **kwargs):
@@ -291,7 +290,6 @@ class EventAlarm(object):
                         kwargs["value"]).startswith("-"):
                     self.log_dict[kwargs["pk"]]["cumulative"][kwargs["key"]] += int(max(kwargs["value"]))
         except Exception, e:
-            print traceback.format_exc()
             Logger.error(traceback.format_exc())
 
     def daemonize(self, dir_path, save_dir, json_dir, ip):
@@ -344,9 +342,7 @@ class EventAlarm(object):
                                 Logger.info("File is exists at %s\n" % str(check_path))
                                 os.remove(file_path)
             except Exception, e:
-                print traceback.format_exc()
                 Logger.error(traceback.format_exc())
-
                 Logger.debug('Daemon exits at %s\n' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
                 cmd = "sudo kill -9 %s" % str(os.getpid())
                 os.system(cmd)
