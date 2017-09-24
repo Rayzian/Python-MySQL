@@ -7,15 +7,28 @@
 """
 import codecs
 import traceback
+import shutil
+import time
 from random import choice
 import gzip
 import requests
 import json
 import os
 import re
+import sys
 from xml.dom.minidom import parse
 import xml.dom.minidom
-from logger import loggerError, loggerInfo
+from argUtil import genParserClient
+import logging
+from logging.handlers import RotatingFileHandler
+
+LOG_PATH_FILE = "./daemon.log"
+LOG_MODE = 'a'
+LOG_MAX_SIZE = 2 * 1024 * 1024  # 2M
+LOG_MAX_FILES = 4  # 4 Files: print.log.1, print.log.2, print.log.3, print.log.4
+LOG_LEVEL = logging.DEBUG
+
+LOG_FORMAT = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d(%(funcName)s)] %(message)s"
 
 
 class _GZipTool(object):
@@ -35,11 +48,11 @@ class _GZipTool(object):
         :param dst: 解压后文件路径
         :return: 解压后文件路径
         """
-        loggerInfo("start to decompress: %s" % gzFile)
+        print "start to decompress: ", gzFile
         self.fin = gzip.open(gzFile, 'rb')
         self.fout = open(dst, 'wb')
         self.__in2out()
-        loggerInfo("decompress %s final." % gzFile)
+        print "decompress {} final.".format(gzFile)
         return dst
 
     def __in2out(self):
@@ -57,14 +70,10 @@ class _GZipTool(object):
 
 
 class EventAlarm(object):
-    def __init__(self, file_name, floder, json_dir, file_path, ip):
+    def __init__(self):
+        self.textMsg_list = []
         self.cumulative_dict = {}
         self.log_dict = {}
-        self.file_name = file_name
-        self.floder = floder
-        self.json_dir = json_dir
-        self.file_path = file_path
-        self.host = ip
 
     def parseXML(self):
         """
@@ -96,22 +105,19 @@ class EventAlarm(object):
             if xml_dict:
                 return xml_dict
         except Exception, e:
-            loggerError(traceback.format_exc())
+            Logger.error(traceback.format_exc())
 
-    def parseLogFile(self):
+    def parseLogFile(self, file_path, json_dir, ip):
         """
         解析日志文件
         :param file_path: 日志文件路径
         :param xml: xml文件
         :return: None
         """
-        json_path = os.path.join(self.json_dir, self.floder)
-        if not os.path.exists(json_path):
-            os.mkdir(json_path)
-
         xml = self.parseXML()
-        path, flag = self.checkFileType(path=self.file_path)
-        json_name = os.path.join(json_path, (self.file_name + ".json"))
+        path, flag = self.checkFileType(path=file_path)
+        file_name = path.replace("\\", "/").strip().split("/")[-1]
+        json_name = os.path.join(json_dir, (file_name + ".json"))
 
         with open(path, "r") as f:
             switch = False
@@ -176,7 +182,7 @@ class EventAlarm(object):
                                                     self.log_dict[pk][filterkey][key] = max(value_dict[key])
 
                 except Exception, e:
-                    loggerError(traceback.format_exc())
+                    Logger.error(traceback.format_exc())
 
             try:
                 if switch:
@@ -186,16 +192,15 @@ class EventAlarm(object):
                                 u"过滤规则": xml,
                                 u"问题字段": self.log_dict[log_key],
                                 u"pk": log_key,
-                                u"日志文件名": self.file_name,
-                                u"服务器编号": self.floder
+                                u"日志文件名": file_name
                             }
                             print data
                             f.write((json.dumps(data, ensure_ascii=False)))
                             f.write("\n")
 
-                    self.sendLogData(file=json_name)
+                    self.sendLogData(file=json_name, ip=ip)
             except Exception, e:
-                loggerError(traceback.format_exc())
+                Logger.error(traceback.format_exc())
 
             if flag:
                 os.remove(path)
@@ -232,7 +237,7 @@ class EventAlarm(object):
         """
         try:
             current_folder = os.path.dirname(os.path.realpath(__file__)).replace("\\", "/").strip().split("/")[-1]
-            host = self.host
+            host = kwargs["ip"]
             ftp_path = "ftp://" + host
             file_name = kwargs["file"].replace("\\", "/").strip().split("/")[-1]
             path = ftp_path + "/" + current_folder + "/" + "result" + "/" + file_name
@@ -259,7 +264,7 @@ class EventAlarm(object):
             self.log_dict = {}
         except Exception, e:
             self.log_dict = {}
-            loggerError(traceback.format_exc())
+            Logger.error(traceback.format_exc())
 
     def accumulate(self, **kwargs):
         """
@@ -285,10 +290,93 @@ class EventAlarm(object):
                         kwargs["value"]).startswith("-"):
                     self.log_dict[kwargs["pk"]]["cumulative"][kwargs["key"]] += int(max(kwargs["value"]))
         except Exception, e:
-            loggerError(traceback.format_exc())
+            Logger.error(traceback.format_exc())
 
-    @classmethod
-    def startParse(cls, file_path, json_dir, ip):
-        file_name = file_path.replace("\\", "/").strip().split("/")[-1]
-        floder = file_path.replace("\\", "/").strip().split("/")[-2]
-        return cls(file_name=file_name, floder=floder, json_dir=json_dir, file_path=file_path, ip=ip)
+    def daemonize(self, dir_path, save_dir, json_dir, ip):
+        """
+        创建守护进程
+        :param dir_path: 日志文件夹路径
+        :param save_dir: 保存日志的文件夹路径
+        :return: None
+        """
+
+        pid = os.fork()
+        if pid:
+            sys.exit(0)
+
+        os.chdir('%s' % (os.getcwd()))
+        os.umask(0)
+        os.setsid()
+
+        _pid = os.fork()
+        if _pid:
+            sys.exit(0)
+
+        sys.stdout.flush()
+        sys.stderr.flush()
+
+        Logger.info("Daemon pid is: %s" % str(os.getpid()))
+        with open('/dev/null') as read_null, open('/dev/null', 'w') as write_null:
+            os.dup2(read_null.fileno(), sys.stdin.fileno())
+            os.dup2(write_null.fileno(), sys.stdout.fileno())
+            os.dup2(write_null.fileno(), sys.stderr.fileno())
+
+        while True:
+            try:
+                for path, dir, files in os.walk(dir_path):
+                    if files:
+                        for file in files:
+                            check_path = os.path.join(save_dir, file)
+                            file_path = os.path.join(path, file)
+
+                            # 检查保存日志文件的文件夹是否有该文件
+                            if not os.path.exists(check_path):
+                                Logger.info("Get log: %s" % str(file))
+                                self.parseLogFile(file_path=file_path, json_dir=json_dir, ip=ip)
+                                Logger.info("Parse log %s finished." % str(file))
+                                Logger.info("Copy log to %s" % str(save_dir))
+                                shutil.copy(file_path, save_dir)
+                                Logger.info("Copy finished.\n")
+                                os.remove(file_path)
+                            else:
+                                Logger.info("File is exists at %s\n" % str(check_path))
+                                os.remove(file_path)
+            except Exception, e:
+                Logger.error(traceback.format_exc())
+                Logger.debug('Daemon exits at %s\n' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
+                cmd = "sudo kill -9 %s" % str(os.getpid())
+                os.system(cmd)
+                return None
+
+
+if __name__ == '__main__':
+    try:
+        # 获取日志文件目录
+        config, _ = genParserClient()
+        dir_path = config.path
+        ip = config.host
+
+        event = EventAlarm()
+
+        # 实例化logger对象
+        handler = RotatingFileHandler(LOG_PATH_FILE, LOG_MODE, LOG_MAX_SIZE, LOG_MAX_FILES)
+        formatter = logging.Formatter(LOG_FORMAT)
+        handler.setFormatter(formatter)
+
+        Logger = logging.getLogger()
+        Logger.setLevel(LOG_LEVEL)
+        Logger.addHandler(handler)
+
+        Logger.info('Daemon start up at %s' % (time.strftime('%Y:%m:%d-%H:%m:%s', time.localtime(time.time()))))
+
+        # 创建保存日志文件的文件夹
+        path = sys.path[0]
+        save_dir = os.path.join(path, "gameLogTemp")
+        json_dir = os.path.join(path, "result")
+        if not os.path.exists(save_dir):
+            os.mkdir(save_dir)
+        if not os.path.exists(json_dir):
+            os.mkdir(json_dir)
+        event.daemonize(dir_path=dir_path, save_dir=save_dir, json_dir=json_dir, ip=ip)
+    except Exception, e:
+        print traceback.format_exc()
