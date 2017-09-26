@@ -12,6 +12,10 @@ def genParserClient(version='0.0.1'):
                      default=False,
                      help=u'日志文件路径')
 
+    group.add_option('-l', '--host',
+                     default=False,
+                     help=u'服务器地址')
+
     parser.add_option_group(group)
 
     return parser.parse_args()

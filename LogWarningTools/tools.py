@@ -65,6 +65,7 @@ class EventAlarm(object):
         self.json_dir = json_dir
         self.file_path = file_path
         self.host = ip
+        self.parseLogFile()
 
     def parseXML(self):
         """
@@ -197,6 +198,8 @@ class EventAlarm(object):
             except Exception, e:
                 loggerError(traceback.format_exc())
 
+            loggerInfo("Parse %s final." % self.file_name)
+
             if flag:
                 os.remove(path)
 
@@ -222,6 +225,8 @@ class EventAlarm(object):
         """
         gz = _GZipTool(bufSize=8192)
         decompress_path = path[:-3]
+        if os.path.exists(decompress_path):
+            os.remove(decompress_path)
         return gz.decompress(gzFile=path, dst=decompress_path)
 
     def sendLogData(self, **kwargs):
@@ -235,7 +240,7 @@ class EventAlarm(object):
             host = self.host
             ftp_path = "ftp://" + host
             file_name = kwargs["file"].replace("\\", "/").strip().split("/")[-1]
-            path = ftp_path + "/" + current_folder + "/" + "result" + "/" + file_name
+            path = ftp_path + "/" + current_folder + "/" + "result" + "/" + self.floder + "/" + file_name
 
             url_list = [
                 "https://oapi.dingtalk.com/robot/send?access_token=45f5f3675c7752a245324a79209c9d814aceb80e5d63a8d041e34fc3c4611baf",
@@ -289,6 +294,14 @@ class EventAlarm(object):
 
     @classmethod
     def startParse(cls, file_path, json_dir, ip):
+
         file_name = file_path.replace("\\", "/").strip().split("/")[-1]
         floder = file_path.replace("\\", "/").strip().split("/")[-2]
         return cls(file_name=file_name, floder=floder, json_dir=json_dir, file_path=file_path, ip=ip)
+
+#
+# if __name__ == '__main__':
+#     file_path = r'/home/zhouxiaoxi/Desktop/Log111/0001/20170922.gz'
+#     ip = "127.0.0.1"
+#     json_dir = r'/home/zhouxiaoxi/Desktop/LogWarningTools/result'
+#     EventAlarm.startParse(file_path=file_path, json_dir=json_dir, ip=ip)

@@ -16,8 +16,8 @@
     </logName>
 
     <logName filterkey="wupin">
-        <filed name="240010" limit="150" cumulative="true"/>
-        <filed name="240011" limit="80" cumulative="true"/>
+        <filed name="110003" limit="150" cumulative="true"/>
+        <filed name="110004" limit="80" cumulative="true"/>
     </logName>
 
 </catalog>

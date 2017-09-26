@@ -5,11 +5,13 @@ author zhouxiaoxi
 简乐互动
 """
 
+import time
 import pymongo
 import traceback
 import os
 import sys
 import Queue
+import threading
 from multiprocessing import Process
 from tools import EventAlarm
 from argUtil import genParserClient
@@ -64,7 +66,7 @@ class Scheduler(object):
                                 self.collection.find({"path": file_path}).next()
                                 continue
                             except StopIteration:
-                                loggerInfo("Add %s to the task queue: %s" % str(file))
+                                loggerInfo("Add %s to the task queue" % str(file))
                                 self.q.put(file_path)
 
                 while (not self.q.empty()):
@@ -79,28 +81,30 @@ class Scheduler(object):
                         loggerInfo("The task queue is empty")
 
                     if file1 and file2:
-                        proc1 = Process(target=EventAlarm.startParse, args=(file1, json_dir, ip,), name="proc1")
-                        proc2 = Process(target=EventAlarm.startParse, args=(file2, json_dir, ip,), name="proc2")
-                        proc1.start()
-                        proc2.start()
-                        proc1.join()
-                        loggerInfo("The file -> %s <- parse final." % file1)
+                        try:
+                            th1 = threading.Thread(target=EventAlarm.startParse, args=(file1, json_dir, ip,), name="thread1")
+                            th2 = threading.Thread(target=EventAlarm.startParse, args=(file2, json_dir, ip,), name="thread2")
+                            th1.start()
+                            time.sleep(1.5)
+                            th2.start()
+                            th1.join()
+                            th2.join()
+                        except Exception, e:
+                            loggerError(traceback.format_exc())
                         self.collection.insert_one({"path": file1})
-                        proc2.join()
-                        loggerInfo("The file -> %s <- parse final." % file2)
                         self.collection.insert_one({"path": file2})
                     else:
                         if file1:
-                            proc = Process(target=EventAlarm.startParse, args=(file1, json_dir, ip,), name="proc")
-                            proc.start()
-                            proc.join()
-                            loggerInfo("The file -> %s <- parse final." % file1)
+                            th = threading.Thread(target=EventAlarm.startParse, args=(file1, json_dir, ip,),
+                                                   name="thread")
+                            th.start()
+                            th.join()
                             self.collection.insert_one({"path": file1})
                         elif file2:
-                            proc = Process(target=EventAlarm.startParse, args=(file2, json_dir, ip,), name="proc")
-                            proc.start()
-                            proc.join()
-                            loggerInfo("The file -> %s <- parse final." % file2)
+                            th = threading.Thread(target=EventAlarm.startParse, args=(file2, json_dir, ip,),
+                                                   name="thread")
+                            th.start()
+                            th.join()
                             self.collection.insert_one({"path": file2})
 
             except Exception, e:
